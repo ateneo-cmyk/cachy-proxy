@@ -4,8 +4,8 @@ const http = require('node:http');
 const { spawn } = require('node:child_process');
 const axios = require('axios');
 
-const ORIGIN_PORT = 5001;
-const PROXY_PORT = 5002;
+const ORIGIN_PORT = 5011;
+const PROXY_PORT = 5012;
 const PROXY_URL = `http://localhost:${PROXY_PORT}`;
 const ORIGIN_URL = `http://localhost:${ORIGIN_PORT}`;
 
