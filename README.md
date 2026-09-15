@@ -2,38 +2,34 @@
 
 Un servidor proxy inverso de alto rendimiento y resiliencia empresarial basado en **Node.js**, **Express** y **Axios**, desarrollado bajo la metodología **Spec-Driven Development ([GitHub Spec Kit](https://github.com/github/spec-kit))**.
 
-Intercepta peticiones HTTP, las reenvía al origen y gestiona una caché inteligente con soporte de **protección contra Cache-Stampede (Request Collapsing)**, **Rate Limiting inteligente**, **Stale-While-Revalidate (RFC 5861)**, **revalidación condicional (ETag / 304)**, **desalojo LRU**, **panel de control Web interactivo** y **métricas en vivo**.
-
 ---
 
 ## ✨ Características Principales
 
+* 🔀 **Balanceo de Carga y Failover Automático:**
+  * Configura múltiples orígenes con `--origin url1,url2,...`.
+  * Distribución **Round-Robin** equitativa.
+  * **Circuit Breaker / Failover:** Si un servidor de origen cae o responde con errores 502/503/504, el proxy conmuta automáticamente al siguiente origen disponible en la misma petición del cliente.
+* 🎭 **Modo Mocking y Offline (Record & Playback):**
+  * `--record [dir]`: Graba las respuestas reales exitosas con cuerpo (Base64) y cabeceras intactas.
+  * `--offline [dir]` / `--replay [dir]`: Permite trabajar completamente desconectado sin depender del servidor de origen (sirve con `X-Cache: REPLAY`).
+* 🔐 **Seguridad en Dashboard y APIs Administrativas:**
+  * `--dashboard-auth <user:pass>`: Protege el panel web `/__cachy` y los endpoints de purga mediante HTTP Basic Authentication estándar.
+* 🛠️ **Inyección de Cabeceras y Reescritura de Rutas:**
+  * `--set-header "Header: Valor"`: Inyecta cabeceras salientes hacia el origen (ej: `Authorization: Bearer token`).
+  * `--rewrite "regex:reemplazo"`: Transforma y adapta URLs antes de evaluar la caché o el backend.
 * 🔄 **Protección contra Cache-Stampede (Request Collapsing / Coalescing):**
-  * Ante ráfagas simultáneas de decenas o cientos de peticiones hacia una misma URL no cacheada, el proxy **sólo realiza 1 petición de red al servidor de origen**. Las peticiones concurrentes se colapsan y responden al unísono, protegiendo al backend de saturaciones (*thundering herd*).
+  * Colapsa ráfagas masivas concurrentes hacia la misma URL en una sola petición al origen (*anti thundering herd*).
 * 🚦 **Throttling y Rate Limiting Inteligente (`-r, --rate-limit <req/min>`):**
-  * Limita el tráfico hacia el servidor origen por IP de cliente.
-  * **Trato preferencial para la caché:** Las peticiones resueltas como `HIT` o `STALE` **no consumen cupo de rate limit**, incentivando el consumo eficiente.
-  * Respuestas estándar `429 Too Many Requests` con cabeceras `Retry-After`, `X-RateLimit-Limit` y `X-RateLimit-Remaining`.
+  * Limita el tráfico hacia el origen por IP sin penalizar las peticiones servidas desde caché (`HIT` o `STALE`).
 * ⚡ **Stale-While-Revalidate (RFC 5861) (`--swr <segundos>`):**
-  * Cuando un recurso vence su TTL pero está dentro de la ventana SWR, el proxy responde de inmediato con el dato caducado (`X-Cache: STALE`) con latencia casi nula (<2ms) y dispara una actualización asíncrona no bloqueante en background hacia el origen.
+  * Entrega respuestas caducadas de inmediato (`X-Cache: STALE`) en <2ms mientras revalida en background sin bloquear al usuario.
 * 🧠 **Conformidad HTTP Estricta (RFC 9111) & Revalidación 304:**
-  * Métodos seguros (`GET`, `HEAD`) son evaluados para caché.
-  * Mutaciones (`POST`, `PUT`, `DELETE`, `PATCH`) se reenvían al origen (`BYPASS`) e invalidan automáticamente la ruta afectada.
-  * Respeta directivas del origen: `Cache-Control: no-store, private` nunca se cachean, y `max-age=N` prevalece sobre el TTL por defecto.
-  * Revalidación condicional `ETag` y `304 Not Modified` con entrega de `X-Cache: REVALIDATED` sin retransmitir el cuerpo.
-* 🛡️ **Límite de Memoria y Desalojo LRU:**
-  * Configurable con `--max-entries <n>`. Al superarse el límite, las claves menos consultadas se purgan de inmediato.
-* 🔀 **Filtros de Rutas (`--exclude` e `--include`):**
-  * Omitir rutas sensibles mediante patrones comodín (ej: `--exclude "/auth/*,/checkout/*"`).
-* 📊 **Métricas en Tiempo Real:**
-  * Seguimiento en vivo de `hits`, `misses`, `revalidations`, `staleHits`, `coalescedRequests` y `rateLimitedRequests`.
-  * Endpoints JSON: `GET /__cachy/api/stats`, `GET /__cachy/api/entries` y `DELETE /__cachy/api/cache`.
+  * Respeta `Cache-Control: no-store, private`, `max-age` y revalidación `ETag` con respuestas `304 Not Modified` (`X-Cache: REVALIDATED`).
+* 🛡️ **Límite de Memoria y Desalojo LRU (`-m, --max-entries <n>`):**
+  * Evita fugas de memoria purgando automáticamente las entradas menos consultadas.
 * 🎛️ **Dashboard Web Visual Embebido:**
-  * Interfaz gráfica en `http://localhost:<puerto>/__cachy` con tarjetas KPI en vivo, tabla de entradas y purga con un clic.
-* 💾 **Persistencia Híbrida:**
-  * Guarda las entradas en `.cachy-cache.json` para que el comando `--clear-cache` funcione entre terminales. (Desactivable con `--no-persist`).
-* 🧪 **Suite de Pruebas Automatizadas:**
-  * 11 tests automatizados con el runner nativo de Node.js ejecutables mediante `npm test`.
+  * Monitoreo en tiempo real de métricas, fallos, failovers, aciertos SWR y purga interactiva en `http://localhost:<puerto>/__cachy`.
 
 ---
 
@@ -50,46 +46,55 @@ npm link
 
 ---
 
-## 🚀 Uso y Opciones CLI
+## 🚀 Opciones CLI Disponibles
 
 ```bash
-node index.js --origin <URL_DEL_ORIGEN> [opciones]
+node index.js [opciones]
 ```
 
-### Tabla de Opciones (Flags)
-
-| Flag corto | Flag largo | Descripción | Por defecto |
-| :--- | :--- | :--- | :--- |
-| `-o` | `--origin <url>` | **(Obligatorio para iniciar)** URL del servidor real de origen. | *Ninguno* |
-| `-p` | `--port <number>` | Puerto local en el que escuchará el servidor proxy. | `3000` |
-| `-t` | `--ttl <seconds>` | Tiempo de expiración por defecto en segundos (`0` para infinito). | `60` |
-| `-r` | `--rate-limit <n>` | Peticiones hacia el origen permitidas por minuto por IP (`0` para desactivar). | `0` |
-| | `--swr <seconds>` | Ventana de stale-while-revalidate en segundos. | `0` |
-| `-m` | `--max-entries <n>`| Límite máximo de entradas en caché antes de desalojo LRU. | `500` |
-| | `--exclude <patrones>` | Rutas a excluir de caché separadas por coma (ej: `/auth/*,/login`). | *Ninguno* |
-| | `--include <patrones>` | Rutas exclusivas a cachear separadas por coma. | *Ninguno* |
-| | `--clear-cache` | Limpia el archivo de caché almacenado y sale inmediatamente. | *Desactivado* |
-| | `--no-persist` | Desactiva el guardado en disco y opera solo en memoria RAM. | *Desactivado* |
-| `-h` | `--help` | Muestra la ayuda interactiva de la CLI. | |
+| Flag | Descripción | Por defecto |
+| :--- | :--- | :--- |
+| `-o, --origin <urls>` | URL(s) del origen separadas por coma (ej: `http://srv1,http://srv2`). | *Obligatorio (salvo en modo offline)* |
+| `-p, --port <number>` | Puerto local en el que escucha el proxy. | `3000` |
+| `-t, --ttl <seconds>` | TTL de caché por defecto en segundos (`0` para infinito). | `60` |
+| `--swr <seconds>` | Ventana de stale-while-revalidate en segundos. | `0` |
+| `-r, --rate-limit <n>` | Límite de peticiones al origen por minuto por IP. | `0` (desactivado) |
+| `-m, --max-entries <n>` | Límite máximo de entradas antes de desalojo LRU. | `500` |
+| `--record [dir]` | Graba respuestas en el directorio de fixtures. | `./fixtures` |
+| `--offline [dir]` | Modo offline: responde solo desde fixtures grabados. | `./fixtures` |
+| `--dashboard-auth <u:p>` | Protege el dashboard con usuario y contraseña (Basic Auth). | *Desactivado* |
+| `--set-header <H:V...>` | Inyecta cabeceras salientes hacia el origen. | *Ninguno* |
+| `--rewrite <R...>` | Reglas de reescritura de rutas (ej: `^/api/(.*):/$1`). | *Ninguno* |
+| `--exclude <pats>` | Rutas a excluir de caché separadas por coma. | *Ninguno* |
+| `--clear-cache` | Limpia la caché almacenada y sale. | *Desactivado* |
+| `--force-cache` | Fuerza el guardado ignorando directivas `no-store` del origen. | *Desactivado* |
+| `--no-persist` | Desactiva la persistencia en disco (solo RAM). | *Desactivado* |
 
 ---
 
-## 💡 Ejemplos Prácticos
+## 💡 Ejemplos de Uso
 
-### 1. Iniciar con SWR (Stale-While-Revalidate) y Rate Limiting
+### 1. Balanceo de Carga con Failover
 ```bash
-node index.js --origin https://dummyjson.com --ttl 30 --swr 60 --rate-limit 100
+node index.js --origin https://api1.example.com,https://api2.example.com --port 8080
 ```
-* Las peticiones en caché responden al instante (<2ms).
-* Durante la ventana de 60s tras expirar, los clientes reciben `STALE` sin demoras mientras el proxy revalida en background.
-* Cada IP solo puede enviar hasta 100 peticiones no cacheadas por minuto hacia el origen.
 
-### 2. Monitoreo en Vivo (Dashboard)
-Abre en tu navegador: **`http://localhost:3000/__cachy`** para inspeccionar las métricas de peticiones coalescidas, aciertos SWR, bloqueos por rate limit y purga de caché.
-
-### 3. Limpiar la Caché
+### 2. Grabación y Reproducción Offline (Mocking)
 ```bash
-node index.js --clear-cache
+# 1. Grabar respuestas reales
+node index.js --origin https://dummyjson.com --record ./fixtures
+
+# 2. Correr sin internet / con origen apagado
+node index.js --offline ./fixtures
+```
+
+### 3. Proxy Seguro con Inyección de Token y Reescritura
+```bash
+node index.js \
+  --origin https://api.internal.net \
+  --dashboard-auth admin:secret123 \
+  --set-header "Authorization: Bearer superSecretToken" \
+  --rewrite "^/legacy/(.*):/v2/$1"
 ```
 
 ---
@@ -100,15 +105,18 @@ node index.js --clear-cache
 npm test
 ```
 
-Ejecuta secuencialmente ambas suites de prueba:
-1. `test/proxy.test.js`: Flujo HIT/MISS, POST bypass e invalidación, `Cache-Control: no-store`, revalidación 304, LRU eviction y filtros de exclusión.
-2. `test/resilience.test.js`: Request Collapsing (20 peticiones simultáneas = 1 llamada al origen), Stale-While-Revalidate en background y Rate Limiting por IP (bloqueo 429 y exención de HIT/STALE).
+Ejecuta secuencialmente las 3 suites del proyecto:
+1. `test/proxy.test.js`: Flujo HIT/MISS, POST bypass, `Cache-Control: no-store`, revalidación 304, LRU eviction y filtros de exclusión.
+2. `test/resilience.test.js`: Request Collapsing (20 peticiones simultáneas = 1 llamada al origen), SWR y Rate Limiting inteligente.
+3. `test/advanced.test.js`: Load Balancing Round-Robin, Failover automático, inyección de cabeceras, reescritura de URLs, seguridad Basic Auth en dashboard y modo Offline Mocking.
+
+**Total:** 17 tests automatizados ejecutados con el runner nativo de Node.js (100% de éxito).
 
 ---
 
 ## 📐 Metodología Spec Kit
 
-Este proyecto sigue la metodología **Spec-Driven Development** de [GitHub Spec Kit](https://github.com/github/spec-kit):
-* Constitución del proyecto: [.specify/memory/constitution.md](.specify/memory/constitution.md)
+* Constitución: [.specify/memory/constitution.md](.specify/memory/constitution.md)
 * Feature 001 (Mejoras Base): [specs/001-caching-proxy-enhancements/spec.md](specs/001-caching-proxy-enhancements/spec.md)
-* Feature 002 (Resiliencia y Rendimiento): [specs/002-resilience-and-performance/spec.md](specs/002-resilience-and-performance/spec.md)
+* Feature 002 (Resiliencia): [specs/002-resilience-and-performance/spec.md](specs/002-resilience-and-performance/spec.md)
+* Feature 003 (Enterprise Suite): [specs/003-offline-loadbalancing-security/spec.md](specs/003-offline-loadbalancing-security/spec.md)
